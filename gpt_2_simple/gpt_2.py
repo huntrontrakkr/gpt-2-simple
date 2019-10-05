@@ -37,7 +37,7 @@ def download_file_with_progress(url_base, sub_dir, model_name, file_name):
     file_name : str
         name of file to get e.g. "hparams.json"
     sub_dir: str
-        subdirectory inside which to get and copy locally eg. "models/124M" 
+        subdirectory inside which to get and copy locally eg. "models/124M"
         no trailing slash
     url_base : str
         Start of URL location specifying server and any base directories no 
@@ -68,7 +68,7 @@ def download_gpt2(model_dir='models', model_name='124M'):
 
     model_name : str
         name of the GPT-2 model to download. 
-        As of 22 May 2019 one of "124M" or "355M" but may later include other 
+        As of 22 May 2019 one of "124M" or "355M" but may later include other
         model sizes
 
     Adapted from https://github.com/openai/gpt-2/blob/master/download_model.py
@@ -413,7 +413,8 @@ def generate(sess,
              temperature=0.7,
              top_k=0,
              top_p=0.0,
-             include_prefix=True):
+             include_prefix=True,
+             split_context=0.5):
     """Generates text from a model loaded into memory.
 
     Adapted from https://github.com/openai/gpt-2/blob/master/src/interactive_conditional_samples.py
@@ -434,61 +435,85 @@ def generate(sess,
     else:
         checkpoint_path = os.path.join(checkpoint_dir, run_name)
 
+    if not length:
+        assert truncate is not None, "If generating a non-fixed length \
+        sample, must have a truncation term."
+
     enc = encoder.get_encoder(checkpoint_path)
     hparams = model.default_hparams()
     with open(os.path.join(checkpoint_path, 'hparams.json')) as f:
         hparams.override_from_dict(json.load(f))
 
+    context = tf.compat.v1.placeholder(tf.int32, [batch_size, None])
     if prefix:
-        context = tf.compat.v1.placeholder(tf.int32, [batch_size, None])
-        context_tokens = enc.encode(prefix)
+        context_tokens = [enc.encode(prefix)] * batch_size
+    else:
+        context_tokens = [[enc.encoder['<|endoftext|>']] for _ in range(batch_size)]
 
     np.random.seed(seed)
     tf.compat.v1.set_random_seed(seed)
-
-    output = sample.sample_sequence(
-        hparams=hparams,
-        length=min(length, 1023 - (len(context_tokens) if prefix else 0)),
-        start_token=enc.encoder['<|endoftext|>'] if not prefix else None,
-        context=context if prefix else None,
-        batch_size=batch_size,
-        temperature=temperature, top_k=top_k, top_p=top_p
-    )[:, 1:]
 
     if destination_path:
         f = open(destination_path, 'w')
     generated = 0
     gen_texts = []
     while generated < nsamples:
-        if not prefix:
-            out = sess.run(output)
-        else:
-            out = sess.run(output, feed_dict={
-                    context: batch_size * [context_tokens]
-                })
-        for i in range(batch_size):
-            generated += 1
-            gen_text = enc.decode(out[i])
-            if prefix:
-                gen_text = enc.decode(context_tokens[:1]) + gen_text
-            if truncate:
-                truncate_esc = re.escape(truncate)
-                if prefix and not include_prefix:
-                    prefix_esc = re.escape(prefix)
-                    pattern = '(?:{})(.*?)(?:{})'.format(prefix_esc,
-                                                         truncate_esc)
-                else:
-                    pattern = '(.*?)(?:{})'.format(truncate_esc)
+        gen_text = [''] * batch_size
+        truncated = [False] * batch_size
+        total_tokens = 0
 
-                trunc_text = re.search(pattern, gen_text, re.S)
-                if trunc_text:
-                    gen_text = trunc_text.group(1)
-            gen_text = gen_text.lstrip('\n')
+        while False in truncated:
+            num_tokens = 1023 - (len(context_tokens[0]))
+            output = sample.sample_sequence(
+                hparams=hparams,
+                length=min(length if length else 1023, num_tokens),
+                context=context,
+                batch_size=batch_size,
+                temperature=temperature, top_k=top_k, top_p=top_p
+            )[:, 1:]
+
+            out = sess.run(output, feed_dict={
+                    context: context_tokens
+                })
+
+            total_tokens += num_tokens
+
+            for i in range(batch_size):
+                text = enc.decode(out[i])
+                if prefix:
+                    text = enc.decode(context_tokens[i][:1]) + text
+                if truncate or all(gen_text):
+                    context_tokens[i] = out[i][int(len(out[i])*(1-split_context)):]
+                    if gen_text[i] != '':
+                        split = re.split('[.!?]', gen_text[i])
+                        text = text.partition(list(filter(None, split))[-1])[-1]
+
+                    if truncate:
+                        truncate_esc = re.escape(truncate)
+                        if prefix and not include_prefix:
+                            prefix_esc = re.escape(prefix)
+                            pattern = '(?:{})(.*?)(?:{})'.format(prefix_esc,
+                                                                 truncate_esc)
+                        else:
+                            pattern = '(.*?)(?:{})'.format(truncate_esc)
+
+                        trunc_text = re.search(pattern, text, re.S)
+                        if trunc_text:
+                            text = trunc_text.group(1)
+
+                if not truncated[i]:
+                    gen_text[i] += text.lstrip('\n')
+                if trunc_text or (length is not None and total_tokens >= length-1):
+                    truncated[i] = True
+
+        for gen in gen_text:
             if destination_path:
-                f.write("{}\n{}".format(gen_text, sample_delim))
+                f.write("{}\n{}".format(gen, sample_delim))
             if not return_as_list and not destination_path:
-                print("{}\n{}".format(gen_text, sample_delim), end='')
-            gen_texts.append(gen_text)
+                print("{}\n{}".format(gen, sample_delim), end='')
+            gen_texts.append(gen)
+
+        generated += batch_size
 
     if destination_path:
         f.close()
@@ -513,7 +538,8 @@ def generate_to_file(sess,
                      temperature=0.7,
                      top_k=0,
                      top_p=0.0,
-                     include_prefix=True):
+                     include_prefix=True,
+                     split_context=0.5):
     """Generates the texts to a file.
 
     sample_delim separates texts: set to '' if each text is a small document.
@@ -538,7 +564,8 @@ def generate_to_file(sess,
              temperature=temperature,
              top_k=top_k,
              top_p=top_p,
-             include_prefix=include_prefix)
+             include_prefix=include_prefix,
+             split_context=split_context)
 
 
 def mount_gdrive():
@@ -740,6 +767,9 @@ def cmd():
     parser.add_argument(
         '--multi_gpu',  help="[generate/finetune] Attempt to allocate multiple GPUs for running.",
         nargs='?', default='=' * 20 + '\n', type=bool)
+    parser.add_argument(
+        '--split_context',  help="[generate] When generating a sample longer than 1023 tokens, feed this proportion of previous generation as context.",
+        nargs='?', default=0.5, type=float)
 
     # Positional arguments
     parser.add_argument('mode', nargs='?')
@@ -770,7 +800,8 @@ def cmd():
                      include_prefix=args.include_prefix,
                      sample_delim=args.sample_delim, run_name=args.run_name,
                      checkpoint_dir=args.checkpoint_dir,
-                     top_k=args.top_k, top_p=args.top_p, multi_gpu=args.multi_gpu)
+                     top_k=args.top_k, top_p=args.top_p, multi_gpu=args.multi_gpu,
+                     split_context=args.split_context)
 
 
 def cmd_finetune(dataset, run_name, checkpoint_dir, model_name, model_dir, steps,
@@ -799,7 +830,7 @@ def cmd_generate(nfiles, nsamples, folder,
                  prefix, truncate, include_prefix,
                  sample_delim, run_name,
                  checkpoint_dir,
-                 top_k, top_p, multi_gpu):
+                 top_k, top_p, multi_gpu, split_context):
     """Wrapper script for generating text via the CLI.
     The files are generated into a folder, which can be downloaded
     recursively by downloading the entire folder.
@@ -830,5 +861,6 @@ def cmd_generate(nfiles, nsamples, folder,
                          include_prefix=include_prefix,
                          sample_delim=sample_delim,
                          top_k=top_k,
-                         top_p=top_p
+                         top_p=top_p,
+                         split_context=split_context
                          )
