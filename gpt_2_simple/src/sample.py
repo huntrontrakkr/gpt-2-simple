@@ -50,7 +50,7 @@ def sample_sequence(*, hparams, length, start_token=None,
     if truncate is not None:
         truncate = tf.stack([truncate * batch_size], axis=0)
 
-    compression_axes = [x for x in range(1, int(tf.rank(truncate)))]
+    compression_axes = [x for x in range(1, int(tf.rank(truncate).eval()))]
 
     def step(hparams, tokens, past=None):
         lm_output = model.model(hparams=hparams, X=tokens,
