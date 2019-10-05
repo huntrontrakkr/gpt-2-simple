@@ -81,7 +81,7 @@ def sample_sequence(*, hparams, length, start_token=None,
             samples = tf.random.categorical(
                 logits, num_samples=1, dtype=tf.int32)
             new_output = tf.concat([output, samples], axis=1)
-            if truncate.shape[1] <= new_output.shape[1]:
+            if truncate.shape[1] <= new_output.shape[1] and truncate is not None:
                 new_truncate = tf.reduce_all(tf.equal(new_output[:, -truncate.shape[1]:], truncate), axis=compression_axes)
             else:
                 new_truncate = inner_truncate
@@ -96,7 +96,7 @@ def sample_sequence(*, hparams, length, start_token=None,
             return True
 
         def cond_truncate(*args):
-            return not tf.reduce_all(args[3])
+            return tf.logical_not(tf.reduce_all(args[3]))
 
         _, _, tokens, _ = tf.while_loop(
             cond=cond if truncate is None else cond_truncate,
