@@ -2,7 +2,6 @@ import tensorflow as tf
 
 from gpt_2_simple.src import model
 
-
 def top_k_logits(logits, k):
     if k == 0:
         # no truncation
@@ -16,6 +15,7 @@ def top_k_logits(logits, k):
             tf.ones_like(logits, dtype=logits.dtype) * -1e10,
             logits,
         )
+
     return tf.cond(
         pred=tf.equal(k, 0),
         true_fn=lambda: logits,
@@ -29,7 +29,7 @@ def top_p_logits(logits, p):
         probs_sort = tf.nn.softmax(logits_sort)
         probs_sums = tf.cumsum(probs_sort, axis=1, exclusive=True)
         logits_masked = tf.compat.v1.where(probs_sums < p, logits_sort, tf.ones_like(
-            logits_sort)*1000)  # [batchsize, vocab]
+            logits_sort) * 1000)  # [batchsize, vocab]
         min_logits = tf.reduce_min(input_tensor=logits_masked, axis=1, keepdims=True)  # [batchsize, 1]
         return tf.compat.v1.where(
             logits < min_logits,
@@ -46,9 +46,6 @@ def sample_sequence(*, hparams, length, start_token=None,
     else:
         assert context is None, 'Specify exactly one of start_token and context!'
         context = tf.fill([batch_size, 1], start_token)
-
-    if truncate is not None:
-        truncate = tf.stack([truncate * batch_size], axis=0)
 
     compression_axes = tf.range(1, tf.rank(truncate))
 
@@ -81,10 +78,12 @@ def sample_sequence(*, hparams, length, start_token=None,
             samples = tf.random.categorical(
                 logits, num_samples=1, dtype=tf.int32)
             new_output = tf.concat([output, samples], axis=1)
-            if truncate.shape[1] <= new_output.shape[1] and truncate is not None:
-                new_truncate = tf.reduce_all(tf.equal(new_output[:, -truncate.shape[1]:], truncate), axis=compression_axes)
+            if truncate is not None:
+                new_truncate = tf.equal(samples, truncate)
+                print("one")
             else:
                 new_truncate = inner_truncate
+                print('two')
             return [
                 tf.concat([past, next_outputs['presents']], axis=-2),
                 tf.squeeze(samples, axis=[1]),
@@ -96,7 +95,6 @@ def sample_sequence(*, hparams, length, start_token=None,
             return True
 
         def cond_truncate(*args):
-            print(args[3])
             return tf.logical_not(tf.reduce_all(args[3]))
 
         _, _, tokens, _ = tf.while_loop(

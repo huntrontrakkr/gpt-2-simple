@@ -440,8 +440,8 @@ def generate(sess,
         hparams.override_from_dict(json.load(f))
 
     if truncate:
-        context = tf.compat.v1.placeholder(tf.int32, [batch_size, None])
-        truncate_tokens = enc.encode(truncate)
+        truncation = tf.compat.v1.placeholder(tf.int32, [batch_size, None])
+        truncate_token = enc.encode(truncate)[-1]
 
     if prefix:
         context = tf.compat.v1.placeholder(tf.int32, [batch_size, None])
@@ -456,7 +456,7 @@ def generate(sess,
         start_token=enc.encoder['<|endoftext|>'] if not prefix else None,
         context=context if prefix else None,
         batch_size=batch_size,
-        temperature=temperature, top_k=top_k, top_p=top_p, truncate=truncate_tokens
+        temperature=temperature, top_k=top_k, top_p=top_p, truncate=truncation
     )[:, 1:]
 
     if destination_path:
@@ -468,7 +468,8 @@ def generate(sess,
             out = sess.run(output)
         else:
             out = sess.run(output, feed_dict={
-                    context: batch_size * [context_tokens]
+                    context: batch_size * [context_tokens],
+                    truncate: batch_size * [truncate_token]
                 })
         for i in range(batch_size):
             generated += 1
