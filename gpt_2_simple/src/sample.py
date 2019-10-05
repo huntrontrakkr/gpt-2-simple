@@ -48,7 +48,7 @@ def sample_sequence(*, hparams, length, start_token=None,
         context = tf.fill([batch_size, 1], start_token)
 
     if truncate is not None:
-        truncate = tf.tile(truncate, [batch_size, 1])
+        truncate = tf.stack([truncate * batch_size], axis=0)
 
     compression_axes = [x for x in range(1, tf.rank(truncate))]
 
