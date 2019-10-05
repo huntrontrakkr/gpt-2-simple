@@ -40,12 +40,17 @@ def top_p_logits(logits, p):
 
 def sample_sequence(*, hparams, length, start_token=None,
                     batch_size=None, context=None, temperature=1,
-                    top_k=0, top_p=0.0):
+                    top_k=0, top_p=0.0, truncate=None):
     if start_token is None:
         assert context is not None, 'Specify exactly one of start_token and context!'
     else:
         assert context is None, 'Specify exactly one of start_token and context!'
         context = tf.fill([batch_size, 1], start_token)
+
+    if truncate is not None:
+        truncate = tf.tile(truncate, [batch_size, 1])
+
+    compression_axes = [x for x in range(1, tf.rank(truncate))]
 
     def step(hparams, tokens, past=None):
         lm_output = model.model(hparams=hparams, X=tokens,
@@ -66,7 +71,7 @@ def sample_sequence(*, hparams, length, start_token=None,
         # rather than leaving the last token transformer calculation to the while loop.
         context_output = step(hparams, context[:, :-1])
 
-        def body(past, prev, output):
+        def body(past, prev, output, inner_truncate):
             next_outputs = step(hparams, prev[:, tf.newaxis], past=past)
             logits = next_outputs['logits'][:, -1, :] / tf.cast(temperature, tf.float32)
             if top_p > 0.0:
@@ -75,28 +80,40 @@ def sample_sequence(*, hparams, length, start_token=None,
                 logits = top_k_logits(logits, k=top_k)
             samples = tf.random.categorical(
                 logits, num_samples=1, dtype=tf.int32)
+            new_output = tf.concat([output, samples], axis=1)
+            if truncate.shape[1] <= new_output.shape[1]:
+                new_truncate = tf.reduce_all(tf.equal(new_output[:, -truncate.shape[1]:], truncate), axis=compression_axes)
+            else:
+                new_truncate = inner_truncate
             return [
                 tf.concat([past, next_outputs['presents']], axis=-2),
                 tf.squeeze(samples, axis=[1]),
-                tf.concat([output, samples], axis=1),
+                new_output,
+                tf.logical_or(inner_truncate, new_truncate)
             ]
 
         def cond(*args):
             return True
 
-        _, _, tokens = tf.while_loop(
-            cond=cond, body=body,
+        def cond_truncate(*args):
+            return not tf.reduce_all(args[3])
+
+        _, _, tokens, _ = tf.while_loop(
+            cond=cond if truncate is None else cond_truncate,
+            body=body,
             maximum_iterations=length,
             loop_vars=[
                 context_output['presents'],
                 context[:, -1],
                 context,
+                tf.zeros([batch_size], dtype=tf.dtypes.bool)
             ],
             shape_invariants=[
                 tf.TensorShape(model.past_shape(
                     hparams=hparams, batch_size=batch_size)),
                 tf.TensorShape([batch_size]),
                 tf.TensorShape([batch_size, None]),
+                tf.TensorShape([batch_size]),
             ],
             back_prop=False,
         )

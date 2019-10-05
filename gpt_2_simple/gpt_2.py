@@ -439,6 +439,10 @@ def generate(sess,
     with open(os.path.join(checkpoint_path, 'hparams.json')) as f:
         hparams.override_from_dict(json.load(f))
 
+    if truncate:
+        context = tf.compat.v1.placeholder(tf.int32, [batch_size, None])
+        truncate_tokens = enc.encode(truncate)
+
     if prefix:
         context = tf.compat.v1.placeholder(tf.int32, [batch_size, None])
         context_tokens = enc.encode(prefix)
@@ -452,7 +456,7 @@ def generate(sess,
         start_token=enc.encoder['<|endoftext|>'] if not prefix else None,
         context=context if prefix else None,
         batch_size=batch_size,
-        temperature=temperature, top_k=top_k, top_p=top_p
+        temperature=temperature, top_k=top_k, top_p=top_p, truncate=truncate_tokens
     )[:, 1:]
 
     if destination_path:
