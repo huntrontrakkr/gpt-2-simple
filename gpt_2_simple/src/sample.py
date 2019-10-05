@@ -96,6 +96,7 @@ def sample_sequence(*, hparams, length, start_token=None,
             return True
 
         def cond_truncate(*args):
+            print(args[3])
             return tf.logical_not(tf.reduce_all(args[3]))
 
         _, _, tokens, _ = tf.while_loop(
