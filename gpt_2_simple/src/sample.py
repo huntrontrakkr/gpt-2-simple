@@ -80,10 +80,8 @@ def sample_sequence(*, hparams, length, start_token=None,
             new_output = tf.concat([output, samples], axis=1)
             if truncate is not None:
                 new_truncate = tf.equal(samples, truncate)
-                print("one")
             else:
                 new_truncate = inner_truncate
-                print('two')
             return [
                 tf.concat([past, next_outputs['presents']], axis=-2),
                 tf.squeeze(samples, axis=[1]),
@@ -105,14 +103,14 @@ def sample_sequence(*, hparams, length, start_token=None,
                 context_output['presents'],
                 context[:, -1],
                 context,
-                tf.zeros([batch_size], dtype=tf.dtypes.bool)
+                tf.zeros([batch_size, 1], dtype=tf.dtypes.bool)
             ],
             shape_invariants=[
                 tf.TensorShape(model.past_shape(
                     hparams=hparams, batch_size=batch_size)),
                 tf.TensorShape([batch_size]),
                 tf.TensorShape([batch_size, None]),
-                tf.TensorShape([batch_size]),
+                tf.TensorShape([batch_size, 1]),
             ],
             back_prop=False,
         )
